@@ -1,0 +1,32 @@
+
+
+stages:
+- test
+- deploy
+- teardown
+variables:
+  DOCKER_HOST: unix:///var/run/docker.sock
+unit-test:
+  stage: test
+  script: docker compose run --rm unit-tests
+  after_script: docker compose stop selenium website
+deploy:
+  stage: deploy
+  script: docker compose run --rm terraform apply -auto-approve
+  after_script: docker compose stop selenium website
+  before_script: docker compose run --rm terraform init
+teardown: 
+  stage: teardown
+  script: docker compose run --rm terraform destroy -auto-approve
+  after_script: docker compose stop selenium website
+  before_script: docker compose run --rm terraform init
+integration-test: 
+  dependencies:
+    - deploy
+  stage: deploy
+  script: | 
+    export WEBSITE_URL="http://$(docker compose run --rm terraform output -raw website_url)"
+    docker compose run --rm integration-tests
+  after_script: docker compose stop selenium website
+  before_script: docker compose up -d selenium website 
+

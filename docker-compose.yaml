@@ -1,0 +1,202 @@
+# Uncomment the below if you want to use features from older versions.
+# version: '3.7'
+services:
+  terraform:
+    image: hashicorp/terraform:latest
+    volumes:
+      - ${ACTUAL_PWD:-$PWD}/website:/website
+      - ${ACTUAL_PWD:-$PWD}/infra:/infra
+    working_dir: /infra
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+      - AWS_REGION=ap-southeast-1
+  website:
+    image: nginx:1.25.4-alpine
+    volumes:
+      - ${ACTUAL_PWD:-$PWD}/website:/usr/share/nginx/html
+    #ports:
+    # - 8080:80
+    networks:
+      - gitlab-internal
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "localhost" ]
+      interval: 10s
+      timeout: 60s
+      retries: 5
+      start_period: 60s
+  selenium:
+    # Use this image if you're using a computer with an Intel chip.
+    image: selenium/standalone-chrome:121.0
+    # Use this image if you're using a computer with an Apple Silicon chip.
+    #image: seleniarm/standalone-chromium:121.0
+    #ports:
+      #  - 4444:4444
+      #  - 5900:5900
+    networks:
+      - gitlab-internal
+    healthcheck:
+      test: [ "CMD", "curl", "--fail", "localhost:4444" ]
+      interval: 10s
+      timeout: 60s
+      retries: 10
+      start_period: 60s
+  unit-tests:
+    depends_on:
+      website:
+        condition: service_healthy
+      selenium:
+        condition: service_healthy
+    build:
+      context: .
+    command:
+      - --pattern
+      - /tests/unit/*_spec.rb
+    networks:
+      - gitlab-internal
+  integration-tests:
+    depends_on:
+      selenium:
+        condition: service_started
+    build:
+      context: .
+    environment:
+      - WEBSITE_URL
+    command:
+      - --pattern
+      - /tests/integration/*_spec.rb
+    networks:
+      - gitlab-internal
+  gitlab-runner:
+    image: gitlab/gitlab-runner:alpine3.19
+    environment:
+      DOCKER_NETWORK_MODE: gitlab
+      CI_SERVER_TLS_CA_FILE: /etc/ssl/extra-certs/gitlab.pem
+      DOCKER_VOLUMES: "/var/run/docker.sock:/var/run/docker.sock"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - gitlab-runner-config:/etc/gitlab-runner
+      - cert-vol:/etc/ssl/extra-certs
+    networks:
+      - gitlab-internal
+  gitlab-db:
+    image: postgres:16.2-alpine3.19
+    environment:
+      POSTGRES_PASSWORD: supersecret
+      POSTGRES_DB: gitlabhq_production
+    networks:
+      - gitlab-internal
+    volumes:
+      - gitlab-db:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-d", "gitlabhq_production" ]
+      interval: 10s
+      timeout: 60s
+      retries: 5
+      start_period: 60s
+  gitlab:
+    # image: gitlab/gitlab-ee:16.10.0-ee.0
+    # Uncomment the line below if you're on an Apple Silicon mac.
+    # image: zengxs/gitlab:16.10.0-ee.0
+    image: zengxs/gitlab:16.9.2-ee.0
+    container_name: gitlab
+    restart: always
+    hostname: gitlab.example.com
+    networks:
+      - gitlab-internal
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        # Add any other gitlab.rb configuration here, each on its own line
+        external_url 'https://gitlab.example.com'
+        gitlab_rails['gitlab_shell_ssh_port'] = 2222
+        nginx['ssl_certificate'] = '/etc/ssl/extra-certs/gitlab.pem'
+        nginx['ssl_certificate_key'] = '/etc/ssl/extra-certs/gitlab-key.pem'
+        puma['worker_processes'] = 2
+        sidekiq['max_concurrency'] = 5
+        grafana['enable'] = false
+        prometheus_monitoring['enable'] = false
+        alertmanager['enable'] = false
+        postgresql['enable'] = false
+        gitlab_rails['db_adapter'] = 'postgresql'
+        gitlab_rails['db_encoding'] = 'utf8'
+        gitlab_rails['db_host'] = 'gitlab-db'
+        gitlab_rails['db_port'] = 5432
+        gitlab_rails['db_username'] = 'postgres'
+        gitlab_rails['db_password'] = 'supersecret'
+    ports:
+      - '80:80'
+      - '443:443'
+      - '2222:22'
+    volumes:
+      - 'gitlab-config:/etc/gitlab'
+      - 'gitlab-logs:/var/log/gitlab'
+      - 'gitlab-data:/var/opt/gitlab'
+      - 'cert-vol:/etc/ssl/extra-certs'
+    shm_size: '256m'
+    # ---------------------------------------------------------------------------
+    #
+    # We do not cover the rest of this file in this course.
+    # Check out these amazing LinkedIn Learning courses to learn more about what's
+    # happenin' down here!
+    #
+    # - "Docker Essential Training" by Carlos Nunez
+    # - "Learning Docker Compose" by Nicole Rifkin
+    #
+    # ---------------------------------------------------------------------------
+    depends_on:
+      create-self-signed-certificate:
+        condition: service_started
+      gitlab-runner:
+        condition: service_started
+      gitlab-db:
+        condition: service_healthy
+  # ADVANCED TOPIC: The service below is an "intermediate" Compose service that
+  # creates a self-signed certificate used by the Gitlab website.
+  create-self-signed-certificate:
+    image: bash:5
+    volumes:
+      - 'cert-vol:/certs'
+    command:
+      - bash
+      - -c
+      - |-
+        { test -f /certs/gitlab.pem && test -f /certs/gitlab-key.pem; } && exit 0;
+        apk update && apk add openssl;
+        cd /certs;
+        openssl req -x509 -newkey rsa:4096 -keyout gitlab-key.pem \
+          -out gitlab.pem \
+          -sha256 \
+          -days 3650 \
+          -nodes \
+          -subj "/CN=gitlab.example.com" \
+          -addext "subjectAltName=DNS:localhost,DNS:gitlab.example.com,IP:127.0.0.1"
+
+  # ADVANCED TOPIC: This service simply prints out the certificate that we created.
+  # We use this when we set up Git for the first time.
+  print-self-signed-certificate:
+    image: bash:5
+    volumes:
+      - 'cert-vol:/certs'
+    command: echo /certs/gitlab.pem
+  print-self-signed-certificate-key:
+    image: bash:5
+    volumes:
+      - 'cert-vol:/certs'
+    command: echo /certs/gitlab-key.pem
+
+# ADVANCED TOPIC: We're using container volumes here to improve file access reliability and allow
+# "Docker in Docker" Gitlab runners to create Docker containers easily.
+volumes:
+  cert-vol: {}
+  gitlab-db: {}
+  gitlab-data: {}
+  gitlab-logs: {}
+  gitlab-config: {}
+  gitlab-runner-config: {}
+# ADVANCED TOPIC: We're using custom networks so that containers created by our GitLab Runner can
+# communicate with our GitLab server.
+networks:
+  gitlab-internal:
+    name: gitlab
+    external: true
