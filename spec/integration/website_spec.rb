@@ -25,6 +25,6 @@ raise "Please set the website url" if ENV['WEBSITE_URL'].nil?
 describe "Real website" do
   it "Should be Explore California" do
     visit(ENV['WEBSITE_URL'])
-    expect(page.title).to eq "Welcome to Explore California"
+    expect(page.title).to eq "Hello! Welcome to Explore California"
   end
 end

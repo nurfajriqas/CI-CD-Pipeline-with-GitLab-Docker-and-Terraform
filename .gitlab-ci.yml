@@ -6,7 +6,12 @@ stages:
 - teardown
 variables:
   DOCKER_HOST: unix:///var/run/docker.sock
+check:
+  stage: tes
+  script: ls 
 unit-test:
+  dependencies:
+    - check
   stage: test
   script: docker compose run --rm unit-tests
   after_script: docker compose stop selenium website
