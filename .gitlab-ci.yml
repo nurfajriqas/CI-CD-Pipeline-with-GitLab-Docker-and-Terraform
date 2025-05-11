@@ -7,7 +7,7 @@ stages:
 variables:
   DOCKER_HOST: unix:///var/run/docker.sock
 check:
-  stage: tes
+  stage: test
   script: ls 
 unit-test:
   dependencies:
