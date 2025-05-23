@@ -30,6 +30,7 @@ integration-test:
     - deploy
   stage: deploy
   script: | 
+    docker compose build --no-cache
     export WEBSITE_URL="http://$(docker compose run --rm terraform output -raw website_url)"
     docker compose run --rm integration-tests
   after_script: docker compose stop selenium website
