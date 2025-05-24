@@ -13,7 +13,7 @@ unit-test:
   dependencies:
     - check
   stage: test
-  script: docker compose run --rm unit-tests
+  script: docker compose run --rm unit-tests 
   after_script: docker compose stop selenium website
 deploy:
   stage: deploy
